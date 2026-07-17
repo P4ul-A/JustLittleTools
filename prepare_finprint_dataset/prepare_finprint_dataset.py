@@ -1058,6 +1058,24 @@ def print_alias_summary(aliases: list[dict]) -> None:
             print(f"  {', '.join(alias['ids'])}", file=sys.stderr)
 
 
+def dry_run_payload(report: dict[str, Any]) -> dict[str, Any]:
+    configuration = report["configuration"]
+    return {
+        "configuration": {
+            "source": configuration["source"],
+            "minimum_total_images": configuration["minimum_total_images"],
+            "maximum_manual_images": configuration["maximum_manual_images"],
+            "exclude_letter_suffix_ids": configuration[
+                "exclude_letter_suffix_ids"
+            ],
+            "materialization_mode": configuration["materialization_mode"],
+        },
+        "summary": report["summary"],
+        "solved_aliases": report["solved_aliases"],
+        "unresolved_aliases": report["unresolved_aliases"],
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Prepare manifest-backed, encounter-aware FinPrintv2 identification data."
@@ -1178,27 +1196,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         print_alias_summary(preparation.report["naming_aliases"])
         if args.dry_run:
-            configuration = preparation.report["configuration"]
             print(
                 json.dumps(
-                    {
-                        "configuration": {
-                            "source": configuration["source"],
-                            "minimum_total_images": configuration[
-                                "minimum_total_images"
-                            ],
-                            "maximum_manual_images": configuration[
-                                "maximum_manual_images"
-                            ],
-                            "exclude_letter_suffix_ids": configuration[
-                                "exclude_letter_suffix_ids"
-                            ],
-                            "materialization_mode": configuration[
-                                "materialization_mode"
-                            ],
-                        },
-                        "summary": preparation.report["summary"],
-                    },
+                    dry_run_payload(preparation.report),
                     indent=2,
                     sort_keys=True,
                 )

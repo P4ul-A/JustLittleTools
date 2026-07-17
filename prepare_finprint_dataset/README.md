@@ -77,11 +77,12 @@ by balancing.
 
 ## Understanding the summary
 
-The dry run prints the same `summary` object that is written to
-`preparation_report.json`. Retained, split, cap, and insufficient-sample counts
-use clean crops after validation and conflict handling. The duplicate and
-cross-ID conflict fields instead describe copies removed during that cleaning
-process.
+The dry run prints `configuration`, `summary`, `solved_aliases`, and
+`unresolved_aliases` as structured JSON. The same information is written to
+`preparation_report.json` when a dataset is created. Retained, split, cap, and
+insufficient-sample counts use clean crops after validation and conflict
+handling. The duplicate and cross-ID conflict fields instead describe copies
+removed during that cleaning process.
 
 | Summary field | Meaning |
 | --- | --- |

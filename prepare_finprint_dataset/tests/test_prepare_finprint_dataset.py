@@ -258,6 +258,12 @@ class ManifestAndIdentityTests(unittest.TestCase):
                 preparation.report["solved_aliases"],
             )
             self.assertEqual([], preparation.report["unresolved_aliases"])
+            dry_run = tool.dry_run_payload(preparation.report)
+            self.assertEqual(
+                preparation.report["solved_aliases"],
+                dry_run["solved_aliases"],
+            )
+            self.assertEqual([], dry_run["unresolved_aliases"])
             self.assertTrue(
                 all(
                     item.canonical_id == "NKW-074"

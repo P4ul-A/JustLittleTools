@@ -1,3 +1,0 @@
-folder	position	latitude_decimal	longitude_decimal	source_images
-/Users/paul/Desktop/NOS/Tools/Sample_GPS/day_1	N 69°19.894' / E 15°40.842'	69.3315667	15.6807000	day_1/_NOS4061.NEF
-/Users/paul/Desktop/NOS/Tools/Sample_GPS/day_2	N 69°19.894' / E 15°40.842'	69.3315667	15.6807000	day_2/_NOS4062.NEF

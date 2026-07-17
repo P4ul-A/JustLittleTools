@@ -27,7 +27,7 @@ RAW_EXTENSIONS = {".nef"}
 IMAGE_EXTENSIONS = RAW_EXTENSIONS | {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 OCR_MAX_SIZE = 3000
 
-# DMM coordinates as shown by the GPS in Sample_GPS. Degree and minute marks are
+# DMM coordinates as shown by the GPS in gps_screen_reader/sample. Degree and minute marks are
 # optional because OCR sometimes drops or substitutes them.
 LATITUDE_RE = re.compile(
     r"\b([NS])\s*([0-9OIl]{1,2})\s*[°ºo]?\s*"

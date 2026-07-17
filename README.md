@@ -1,58 +1,50 @@
-# Collection of tools 
-## GPS Screen Reader
+# Collection of tools
 
-This tool recursively crawls a directory, converts Nikon `.NEF` files to JPEG,
-uses Tesseract OCR to identify photographed GPS screens, and writes the position
-for each folder to `gps_positions.txt`. Common JPEG, PNG, and TIFF images are
-also supported.
+Each standalone script lives in its own subfolder with a dedicated README.
+Run commands from this repository root so paths and the shared Python
+environment are consistent.
 
-The source images are never modified. Converted JPEGs are temporary unless
-`--keep-jpegs` is used; OCR-only intermediate images always remain temporary.
-
-### macOS setup
-
-Install Python 3.12 and Tesseract once:
-
-```sh
-brew install python@3.12 tesseract
-```
-
-Then double-click `LaunchGPSScreenReader.command` and choose the directory to
-scan. The result is saved inside the selected directory as `gps_positions.txt`.
-
-### Command-line use
+Tools that process image content use the shared dependencies:
 
 ```sh
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python gps_screen_reader.py /path/to/photos
 ```
 
-Useful options:
+## FinPrintv2 identification dataset preparation
 
-```sh
-# Choose a different result path
-.venv/bin/python gps_screen_reader.py /path/to/photos -o positions.txt
+The standalone tool in [`prepare_finprint_dataset/`](prepare_finprint_dataset/)
+creates a balanced, crop-only FinPrintv2 identification dataset while keeping
+camera bursts together in train, validation, or test. Its own
+[`README.md`](prepare_finprint_dataset/README.md) documents all filtering,
+copy/link, offspring-ID, reporting, and dry-run options.
 
-# Keep the converted JPEGs for review
-.venv/bin/python gps_screen_reader.py /path/to/photos --keep-jpegs converted_gps_jpegs
-```
+## GPS Screen Reader
 
-The tab-separated output contains the absolute folder, the position as shown on
-the screen, decimal latitude/longitude, and the source image name(s). Repeated
-photos of the same position in the same folder are grouped into one row.
+[`gps_screen_reader/`](gps_screen_reader/) finds photographed GPS screens with
+Tesseract OCR and writes grouped coordinates to a tab-separated result. Its
+[`README.md`](gps_screen_reader/README.md) covers setup, supported images,
+filters, retained conversions, output columns, and the bundled sample.
 
 ## NKW filename flipper
 
-`flip_nkw_filenames.py` recursively moves a trailing NKW identifier to the front
-of JPEG and RAW filenames. For example, `Photo_15_NKW-460.jpg` becomes
-`NKW-460_Photo_15.jpg`. Directories and unsupported files are not renamed. The
-operation only renames each file and verifies its SHA-256 checksum before and
-afterward; image data is never decoded or rewritten.
+[`flip_nkw_filenames/`](flip_nkw_filenames/) moves trailing NKW identifiers to
+the front of JPEG and RAW filenames without rewriting image bytes. Its
+[`README.md`](flip_nkw_filenames/README.md) documents dry runs, multi-ID
+handling, collision checks, integrity verification, and the bundled sample.
 
-Preview the changes first, then apply them:
+## In-place JPEG normalizer
 
-```sh
-python3 flip_nkw_filenames.py Sample_Flipped --dry-run
-python3 flip_nkw_filenames.py Sample_Flipped
-```
+[`normalize_images_to_jpeg/`](normalize_images_to_jpeg/) fully decodes images,
+repairs recoverable JPEGs, and converts other readable formats to validated JPEG
+in place. Its [`README.md`](normalize_images_to_jpeg/README.md) explains the
+destructive workflow, dry run, RAW support, conflict protection, parallelism,
+metadata handling, and summary output.
+
+## Recover files missed by JPEG preprocessing
+
+[`copy_unprocessed_images/`](copy_unprocessed_images/) finds files missing from
+an existing JPEG preprocessing output and recovers them as validated JPEGs
+without overwriting prior results. Its
+[`README.md`](copy_unprocessed_images/README.md) documents dry runs, directory
+safety, actual-content decoding, RAW fallback, output naming, and validation.

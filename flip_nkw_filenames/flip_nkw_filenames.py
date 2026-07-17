@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Move a trailing NKW identifier to the front of JPEG and RAW filenames."""
+"""Move trailing NKW identifiers to the front of JPEG and RAW filenames."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ RAW_EXTENSIONS = {
     ".x3f",
 }
 SUPPORTED_EXTENSIONS = JPEG_EXTENSIONS | RAW_EXTENSIONS
-TRAILING_NKW_RE = re.compile(r"^(?P<name>.+)_(?P<identifier>NKW-\d+)$", re.IGNORECASE)
+NKW_ID_RE = re.compile(r"NKW-\d+", re.IGNORECASE)
 HASH_CHUNK_SIZE = 1024 * 1024
 
 
@@ -54,15 +54,26 @@ def flipped_name(path: Path) -> str | None:
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         return None
 
-    match = TRAILING_NKW_RE.fullmatch(path.stem)
-    if match is None:
-        return None
+    parts = path.stem.split("_")
 
-    identifier = match.group("identifier").upper()
-    original_name = match.group("name").lstrip("_")
+    trailing_identifiers: list[str] = []
+    while parts and NKW_ID_RE.fullmatch(parts[-1]):
+        trailing_identifiers.append(parts.pop().upper())
+    if not trailing_identifiers:
+        return None
+    trailing_identifiers.reverse()
+
+    leading_identifiers: list[str] = []
+    while parts and NKW_ID_RE.fullmatch(parts[0]):
+        leading_identifiers.append(parts.pop(0).upper())
+
+    identifiers = "_".join(
+        dict.fromkeys(leading_identifiers + trailing_identifiers)
+    )
+    original_name = "_".join(parts).lstrip("_")
     if not original_name:
         return None
-    return f"{identifier}_{original_name}{path.suffix}"
+    return f"{identifiers}_{original_name}{path.suffix}"
 
 
 def find_renames(root: Path) -> list[Rename]:

@@ -365,6 +365,87 @@ class ManifestAndIdentityTests(unittest.TestCase):
             all(len(splits) == 1 for splits in by_encounter.values())
         )
 
+    def test_minimum_train_images_rebalances_whole_encounters(self) -> None:
+        identity = "NKW-100"
+        encounters = sorted(
+            ("burst-a", "burst-b", "burst-c"),
+            key=lambda encounter: tool.encounter_order(
+                identity, encounter, "seed"
+            ),
+        )
+        sizes = {
+            encounters[0]: 2,
+            encounters[1]: 7,
+            encounters[2]: 1,
+        }
+        items: list[tool.Crop] = []
+        number = 0
+        for encounter, count in sizes.items():
+            for _ in range(count):
+                items.append(
+                    crop(
+                        identity,
+                        number,
+                        source_kind="manual",
+                        encounter=encounter,
+                    )
+                )
+                number += 1
+
+        assigned, details = tool.assign_splits(
+            items,
+            0.15,
+            0.15,
+            "seed",
+            minimum_train_images=5,
+        )
+        self.assertEqual(7, details[0]["image_counts"]["train"])
+        self.assertTrue(details[0]["train_rebalanced"])
+        self.assertFalse(
+            details[0]["excluded_for_insufficient_train_images"]
+        )
+        by_encounter: dict[str, set[str]] = {}
+        for item in assigned:
+            by_encounter.setdefault(item.encounter, set()).add(item.split)
+        self.assertTrue(
+            all(len(splits) == 1 for splits in by_encounter.values())
+        )
+
+    def test_identity_is_excluded_when_five_train_images_are_impossible(
+        self,
+    ) -> None:
+        identity = "NKW-100"
+        items: list[tool.Crop] = []
+        number = 0
+        for encounter, count in (
+            ("burst-a", 4),
+            ("burst-b", 4),
+            ("burst-c", 2),
+        ):
+            for _ in range(count):
+                items.append(
+                    crop(
+                        identity,
+                        number,
+                        source_kind="manual",
+                        encounter=encounter,
+                    )
+                )
+                number += 1
+
+        assigned, details = tool.assign_splits(
+            items,
+            0.15,
+            0.15,
+            "seed",
+            minimum_train_images=5,
+        )
+        self.assertFalse(assigned)
+        self.assertEqual(4, details[0]["maximum_possible_train_images"])
+        self.assertTrue(
+            details[0]["excluded_for_insufficient_train_images"]
+        )
+
 
 class InterfaceAndOutputTests(unittest.TestCase):
     def test_parser_defaults_and_disable_flags(self) -> None:
@@ -372,6 +453,7 @@ class InterfaceAndOutputTests(unittest.TestCase):
         defaults = parser.parse_args(["output"])
         self.assertEqual(tool.DEFAULT_SOURCE, defaults.source)
         self.assertEqual(10, defaults.minimum_total_images)
+        self.assertEqual(5, defaults.minimum_train_images)
         self.assertEqual(30, defaults.maximum_manual_images)
         self.assertEqual("copy", defaults.mode)
         self.assertTrue(defaults.exclude_letter_suffix_ids)
@@ -380,11 +462,13 @@ class InterfaceAndOutputTests(unittest.TestCase):
             [
                 "output",
                 "--no-minimum-total-images",
+                "--no-minimum-train-images",
                 "--no-maximum-manual-images",
                 "--include-letter-suffix-ids",
             ]
         )
         self.assertIsNone(disabled.minimum_total_images)
+        self.assertIsNone(disabled.minimum_train_images)
         self.assertIsNone(disabled.maximum_manual_images)
         self.assertFalse(disabled.exclude_letter_suffix_ids)
 
@@ -396,6 +480,47 @@ class InterfaceAndOutputTests(unittest.TestCase):
             with self.subTest(minimum=minimum, maximum=maximum):
                 with self.assertRaises(ValueError):
                     tool.validate_cutoffs(minimum, maximum)
+        with self.assertRaises(ValueError):
+            tool.validate_cutoffs(10, None, 0)
+
+    def test_report_tracks_insufficient_training_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            write_cluster_id(
+                source,
+                "NKW-100",
+                [
+                    *[("manual", "burst-a") for _ in range(4)],
+                    *[("manual", "burst-b") for _ in range(4)],
+                    *[("manual", "burst-c") for _ in range(2)],
+                ],
+            )
+            preparation = tool.prepare(
+                source,
+                {},
+                None,
+                None,
+                0.15,
+                0.15,
+                "seed",
+                "copy",
+                True,
+                False,
+                minimum_train_images=5,
+            )
+            self.assertFalse(preparation.crops)
+            self.assertEqual(
+                1,
+                preparation.report["summary"][
+                    "insufficient_train_image_id_count"
+                ],
+            )
+            self.assertEqual(
+                "NKW-100",
+                preparation.report[
+                    "ids_excluded_for_insufficient_training_images"
+                ][0]["id"],
+            )
 
     def test_report_tracks_cap_omissions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -17,12 +17,13 @@ The easily editable defaults are near the top of
 ```python
 DEFAULT_SOURCE = Path("/Volumes/SSD_ID/cluster_all_2sec")
 DEFAULT_MINIMUM_TOTAL_IMAGES: int | None = 10
+DEFAULT_MINIMUM_TRAIN_IMAGES: int | None = 5
 DEFAULT_MAXIMUM_MANUAL_IMAGES: int | None = 30
 DEFAULT_MODE = "copy"
 DEFAULT_EXCLUDE_LETTER_SUFFIX_IDS = True
 ```
 
-Set either image cutoff to `None` to disable it by default. Command-line
+Set any image cutoff to `None` to disable it by default. Command-line
 options can override these values for an individual run.
 
 ## Expected input
@@ -52,6 +53,13 @@ The manifest's `encounter_id` is the camera-burst identifier. Every retained
 crop from the same burst is assigned to the same split. For unmatched manual
 crops without an `encounter_id`, the source parent folder is used as a
 conservative fallback group.
+
+After the deterministic split assignment, the tool guarantees at least five
+training crops per included identity by default. It swaps whole camera bursts
+between training and an evaluation split, so no burst is divided and the
+number of bursts in train, validation, and test is unchanged. An identity is
+excluded and reported when five training crops cannot be assigned while
+preserving its independent validation and test bursts.
 
 ## Output
 
@@ -103,6 +111,9 @@ removed during that cleaning process.
 | `cross_id_conflict_hash_count` | Unique image hashes found under more than one canonical identity. No copy of a conflicting hash is retained. |
 | `cross_id_conflict_copy_count` | Total crop files removed because their hashes occurred under different identities. One conflict hash can account for several copies. |
 | `insufficient_sample_id_count` | Canonical IDs below the enabled minimum total-image cutoff after validation, deduplication, and cross-ID conflict removal. This is zero when the minimum is disabled. |
+| `insufficient_train_image_id_count` | Canonical IDs excluded because the minimum training-image count could not be reached without dividing a burst or removing their independent validation or test burst. |
+| `train_rebalanced_id_count` | Included IDs whose whole-burst assignments were swapped to meet the minimum training-image count. |
+| `minimum_train_image_count` | Smallest training crop count among included IDs. With the default rule this is at least five unless the finished dataset has no included IDs. |
 | `training_only_id_count` | Included IDs assigned entirely to training, with no retained crops in validation or test. |
 
 The following relationships are useful when checking a run:
@@ -133,10 +144,13 @@ For the underlying records, inspect these sections of
   candidate ID.
 - `balancing_omitted_images` identifies every crop removed by the minimum or
   maximum balancing rules.
+- `ids_excluded_for_insufficient_training_images` identifies every ID that
+  could not meet the minimum training-image count and reports its highest
+  encounter-safe training count.
 - `same_id_duplicates` and `cross_id_conflicts` provide the affected hashes and
   source paths.
-- `split_details` gives image and camera-burst counts per split for every
-  included ID.
+- `split_details` gives image and camera-burst counts per split, whole-burst
+  training swaps, and minimum-training exclusions for every split candidate.
 - `rejected_crops` and `manifest_errors` describe invalid inputs that were not
   eligible for inclusion.
 - `included_images` lists every retained crop, its source kind, canonical ID,
@@ -156,11 +170,14 @@ Then create the dataset:
 
 ```sh
 python3 prepare_finprint_dataset/prepare_finprint_dataset.py \
-  /path/to/new-output
+  /path/to/new-output \
+  --minimum-train-images 5
 ```
 
 The default source is `/Volumes/SSD_ID/cluster_all_2sec`, and the default
-materialization mode is `copy`.
+materialization mode is `copy`. Five is already the default minimum training
+count; the explicit option makes the intended policy visible in saved command
+history.
 
 ## Balancing rules
 
@@ -186,6 +203,32 @@ additional crops are retained.
 
 When both cutoffs are enabled, the maximum must be at least the minimum. Zero
 and negative cutoff values are rejected.
+
+### Minimum training crops
+
+The train, validation, and test split starts from the deterministic
+camera-burst assignment. If an included identity initially has fewer than the
+configured minimum training crops, the tool repeatedly swaps its largest
+eligible validation or test burst with its smallest training burst. The swap:
+
+1. moves every crop from each affected burst together;
+2. preserves the number of train, validation, and test bursts; and
+3. stops as soon as the minimum is reached.
+
+If the minimum is mathematically impossible with those burst counts, the ID is
+excluded instead of copying one burst into more than one split. The default is:
+
+```sh
+python3 prepare_finprint_dataset/prepare_finprint_dataset.py OUTPUT \
+  --minimum-train-images 5
+```
+
+To restore the original deterministic assignment without a training minimum:
+
+```sh
+python3 prepare_finprint_dataset/prepare_finprint_dataset.py OUTPUT \
+  --no-minimum-train-images
+```
 
 ### Both cutoffs
 

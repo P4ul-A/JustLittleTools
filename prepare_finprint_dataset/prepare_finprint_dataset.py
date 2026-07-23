@@ -26,6 +26,7 @@ from typing import Any
 
 DEFAULT_SOURCE = Path("/Volumes/SSD_ID/cluster_all_2sec")
 DEFAULT_MINIMUM_TOTAL_IMAGES: int | None = 10
+DEFAULT_MINIMUM_TRAIN_IMAGES: int | None = 5
 DEFAULT_MAXIMUM_MANUAL_IMAGES: int | None = 30
 DEFAULT_MODE = "copy"
 DEFAULT_EXCLUDE_LETTER_SUFFIX_IDS = True
@@ -576,7 +577,11 @@ def eval_group_counts(group_count: int, val_fraction: float, test_fraction: floa
 
 
 def assign_splits(
-    crops: list[Crop], val_fraction: float, test_fraction: float, seed: str
+    crops: list[Crop],
+    val_fraction: float,
+    test_fraction: float,
+    seed: str,
+    minimum_train_images: int | None = None,
 ) -> tuple[list[Crop], list[dict]]:
     by_id: dict[str, list[Crop]] = defaultdict(list)
     for crop in crops:
@@ -594,15 +599,87 @@ def assign_splits(
         val_count, test_count = eval_group_counts(
             len(ordered_encounters), val_fraction, test_fraction
         )
-        val_encounters = set(ordered_encounters[:val_count])
-        test_encounters = set(ordered_encounters[val_count : val_count + test_count])
+        split_by_encounter = {
+            encounter: (
+                "val"
+                if index < val_count
+                else "test"
+                if index < val_count + test_count
+                else "train"
+            )
+            for index, encounter in enumerate(ordered_encounters)
+        }
+        train_encounter_count = len(ordered_encounters) - val_count - test_count
+        maximum_possible_train_images = sum(
+            sorted((len(members) for members in groups.values()), reverse=True)[
+                :train_encounter_count
+            ]
+        )
+        swaps: list[dict[str, object]] = []
+        if minimum_train_images is not None:
+            while (
+                sum(
+                    len(groups[encounter])
+                    for encounter, split in split_by_encounter.items()
+                    if split == "train"
+                )
+                < minimum_train_images
+            ):
+                train_encounters = [
+                    encounter
+                    for encounter in ordered_encounters
+                    if split_by_encounter[encounter] == "train"
+                ]
+                evaluation_encounters = [
+                    encounter
+                    for encounter in ordered_encounters
+                    if split_by_encounter[encounter] != "train"
+                ]
+                if not train_encounters or not evaluation_encounters:
+                    break
+                outgoing = min(
+                    train_encounters,
+                    key=lambda encounter: (
+                        len(groups[encounter]),
+                        ordered_encounters.index(encounter),
+                    ),
+                )
+                incoming = max(
+                    evaluation_encounters,
+                    key=lambda encounter: (
+                        len(groups[encounter]),
+                        -ordered_encounters.index(encounter),
+                    ),
+                )
+                if len(groups[incoming]) <= len(groups[outgoing]):
+                    break
+                replacement_split = split_by_encounter[incoming]
+                split_by_encounter[incoming] = "train"
+                split_by_encounter[outgoing] = replacement_split
+                swaps.append(
+                    {
+                        "into_train": incoming,
+                        "into_train_images": len(groups[incoming]),
+                        "out_of_train": outgoing,
+                        "out_of_train_images": len(groups[outgoing]),
+                        "replacement_split": replacement_split,
+                    }
+                )
+
         counts = {"train": 0, "val": 0, "test": 0}
-        encounter_counts = {"train": 0, "val": val_count, "test": test_count}
-        encounter_counts["train"] = len(ordered_encounters) - val_count - test_count
+        encounter_counts = {"train": 0, "val": 0, "test": 0}
         for encounter, members in groups.items():
-            split = "val" if encounter in val_encounters else "test" if encounter in test_encounters else "train"
+            split = split_by_encounter[encounter]
             counts[split] += len(members)
-            assigned.extend(replace(crop, split=split) for crop in members)
+            encounter_counts[split] += 1
+        excluded_for_minimum = (
+            minimum_train_images is not None
+            and counts["train"] < minimum_train_images
+        )
+        if not excluded_for_minimum:
+            for encounter, members in groups.items():
+                split = split_by_encounter[encounter]
+                assigned.extend(replace(crop, split=split) for crop in members)
         split_details.append(
             {
                 "id": identity,
@@ -610,6 +687,11 @@ def assign_splits(
                 "training_only": val_count == 0 and test_count == 0,
                 "image_counts": counts,
                 "encounter_counts": encounter_counts,
+                "minimum_train_images": minimum_train_images,
+                "maximum_possible_train_images": maximum_possible_train_images,
+                "train_rebalanced": bool(swaps),
+                "train_rebalance_swaps": swaps,
+                "excluded_for_insufficient_train_images": excluded_for_minimum,
             }
         )
     return assigned, split_details
@@ -623,12 +705,16 @@ def validate_fractions(val_fraction: float, test_fraction: float) -> None:
 
 
 def validate_cutoffs(
-    minimum_total_images: int | None, maximum_manual_images: int | None
+    minimum_total_images: int | None,
+    maximum_manual_images: int | None,
+    minimum_train_images: int | None = None,
 ) -> None:
     if minimum_total_images is not None and minimum_total_images <= 0:
         raise ValueError("minimum-total-images must be positive or disabled")
     if maximum_manual_images is not None and maximum_manual_images <= 0:
         raise ValueError("maximum-manual-images must be positive or disabled")
+    if minimum_train_images is not None and minimum_train_images <= 0:
+        raise ValueError("minimum-train-images must be positive or disabled")
     if (
         minimum_total_images is not None
         and maximum_manual_images is not None
@@ -651,6 +737,7 @@ def prepare(
     mode: str,
     exclude_letter_suffix_ids: bool,
     show_progress: bool,
+    minimum_train_images: int | None = None,
 ) -> Preparation:
     source_entries = sorted(
         (path.name for path in source.iterdir() if path.is_dir()), key=str.casefold
@@ -719,15 +806,35 @@ def prepare(
     )
     eligible = choose_output_names(eligible)
     assigned, split_details = assign_splits(
-        eligible, val_fraction, test_fraction, seed
+        eligible,
+        val_fraction,
+        test_fraction,
+        seed,
+        minimum_train_images,
     )
     assigned.sort(
         key=lambda crop: (crop.split, crop.canonical_id, crop.output_name.casefold())
     )
 
     included_ids = sorted({crop.canonical_id for crop in assigned})
+    insufficient_training = [
+        {
+            "id": detail["id"],
+            "minimum": minimum_train_images,
+            "assigned_train_image_count": detail["image_counts"]["train"],
+            "maximum_possible_train_image_count": detail[
+                "maximum_possible_train_images"
+            ],
+            "independent_encounters": detail["independent_encounters"],
+            "total_image_count": sum(detail["image_counts"].values()),
+        }
+        for detail in split_details
+        if detail["excluded_for_insufficient_train_images"]
+    ]
     image_counts = {
-        detail["id"]: detail["image_counts"] for detail in split_details
+        detail["id"]: detail["image_counts"]
+        for detail in split_details
+        if not detail["excluded_for_insufficient_train_images"]
     }
     excluded_ids: list[dict] = []
     if exclude_letter_suffix_ids:
@@ -752,6 +859,13 @@ def prepare(
     )
     excluded_ids.extend(
         {
+            "id": entry["id"],
+            "reason": "fewer than the minimum encounter-safe training images",
+        }
+        for entry in insufficient_training
+    )
+    excluded_ids.extend(
+        {
             "id": detail["id"],
             "reason": "no clean manifest-backed crops",
         }
@@ -766,11 +880,12 @@ def prepare(
         if detail["status"] == "capped_manual_only"
     ]
     report: dict[str, Any] = {
-        "format_version": 2,
+        "format_version": 3,
         "configuration": {
             "source": str(source),
             "id_regex": ID_RE.pattern,
             "minimum_total_images": minimum_total_images,
+            "minimum_train_images": minimum_train_images,
             "maximum_manual_images": maximum_manual_images,
             "exclude_letter_suffix_ids": exclude_letter_suffix_ids,
             "validation_fraction": val_fraction,
@@ -818,8 +933,24 @@ def prepare(
                 len(entry["copies"]) for entry in cross_id_conflicts
             ),
             "insufficient_sample_id_count": len(insufficient),
+            "insufficient_train_image_id_count": len(insufficient_training),
+            "train_rebalanced_id_count": sum(
+                detail["train_rebalanced"]
+                for detail in split_details
+                if not detail["excluded_for_insufficient_train_images"]
+            ),
+            "minimum_train_image_count": min(
+                (
+                    detail["image_counts"]["train"]
+                    for detail in split_details
+                    if not detail["excluded_for_insufficient_train_images"]
+                ),
+                default=0,
+            ),
             "training_only_id_count": sum(
-                detail["training_only"] for detail in split_details
+                detail["training_only"]
+                for detail in split_details
+                if not detail["excluded_for_insufficient_train_images"]
             ),
         },
         "included_ids": included_ids,
@@ -838,6 +969,7 @@ def prepare(
         "same_id_duplicates": same_id_duplicates,
         "cross_id_conflicts": cross_id_conflicts,
         "ids_excluded_for_insufficient_samples": insufficient,
+        "ids_excluded_for_insufficient_training_images": insufficient_training,
         "balancing_details": balancing_details,
         "balancing_omitted_images": balancing_omitted_images,
         "split_details": split_details,
@@ -1064,6 +1196,7 @@ def dry_run_payload(report: dict[str, Any]) -> dict[str, Any]:
         "configuration": {
             "source": configuration["source"],
             "minimum_total_images": configuration["minimum_total_images"],
+            "minimum_train_images": configuration["minimum_train_images"],
             "maximum_manual_images": configuration["maximum_manual_images"],
             "exclude_letter_suffix_ids": configuration[
                 "exclude_letter_suffix_ids"
@@ -1116,6 +1249,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_const",
         const=None,
         help="disable the minimum total-image cutoff",
+    )
+    minimum_train_group = parser.add_mutually_exclusive_group()
+    minimum_train_group.add_argument(
+        "--minimum-train-images",
+        dest="minimum_train_images",
+        type=int,
+        default=DEFAULT_MINIMUM_TRAIN_IMAGES,
+        help=(
+            "require at least this many crops in train after encounter-safe "
+            f"assignment (default: {DEFAULT_MINIMUM_TRAIN_IMAGES})"
+        ),
+    )
+    minimum_train_group.add_argument(
+        "--no-minimum-train-images",
+        dest="minimum_train_images",
+        action="store_const",
+        const=None,
+        help="disable the minimum training-image requirement",
     )
     maximum_group = parser.add_mutually_exclusive_group()
     maximum_group.add_argument(
@@ -1178,6 +1329,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_cutoffs(
             args.minimum_total_images,
             args.maximum_manual_images,
+            args.minimum_train_images,
         )
         validate_fractions(args.val_fraction, args.test_fraction)
         source, output = ensure_paths(args.source, args.output)
@@ -1193,6 +1345,7 @@ def main(argv: list[str] | None = None) -> int:
             args.mode,
             args.exclude_letter_suffix_ids,
             not args.no_progress,
+            minimum_train_images=args.minimum_train_images,
         )
         print_alias_summary(preparation.report["naming_aliases"])
         if args.dry_run:

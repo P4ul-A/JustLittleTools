@@ -1,0 +1,3 @@
+python test_sam21_whales.py Test_easy.mp4 \
+--box 2252 1079 3829 1620 \
+--negative-box 34 1152 1220 1508

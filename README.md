@@ -11,6 +11,13 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
+## Drone whale segmentation experiments
+
+The scripts in [`drone_measuring/`](drone_measuring/) test text-prompted
+YOLOE-26 and prompt-propagated SAM 2.1 on DJI videos. They also provide a
+review-gated SAM-to-YOLO segmentation dataset workflow documented in the
+folder's [`README.md`](drone_measuring/README.md).
+
 ## FinPrintv2 identification dataset preparation
 
 The standalone tool in [`prepare_finprint_dataset/`](prepare_finprint_dataset/)
